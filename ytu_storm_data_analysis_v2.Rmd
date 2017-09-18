@@ -1,0 +1,181 @@
+---
+title: "NOAA Storm Data Analysis"
+author: "Yuling Tu"
+date: "September 17, 2017"
+output:
+  word_document: default
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+setwd("~/R/coursera/rep_research/Assignment2")
+```
+
+#Severe Weather Events on Polulation Health and Economy
+
+## Synopsis
+
+The U.S. National Oceanic and Atmospheric Administration's (NOAA) storm database tracks characteristics of major storms and weather events in the United States, including when and where they occur, as well as estimates of any fatalities, injuries and property damage.
+
+This report explores the NOAA Storm data and identify the impact of severe weather events on population health and economic consequences.  This data set is collected from 1995 to November 2011.  
+
+## loading and processing raw data
+
+Download the data set
+```{r download data}
+if(!file.exists("repdata_data_StormData.csv.bz2")) {
+        temp <- tempfile()
+        download.file("https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2",temp)
+        unlink(temp)
+}
+```
+process the data
+```{r read data}
+stormdata <- read.csv(file = "repdata_data_StormData.csv.bz2")
+```
+review the data structure and samples
+```{r view data struture}
+str(stormdata)
+```
+The storm data set has 902297 observations and 37 variables.  In this report, only the following variables are used to analyze the impact on public health and economy.
+
+* EVTYPE -- type of event
+* FATALITIES -- number of death 
+* INJURIES -- number of injuries
+* PROPDMG,PROPDMGEXP,CROPDMG & CROPDMGEXP -- estimate damages in dollars
+
+Create another data set for those variables only.
+
+```{r create subset of data}
+fd <- stormdata[, c("EVTYPE", "FATALITIES", "INJURIES", "PROPDMG", "PROPDMGEXP", "CROPDMG", "CROPDMGEXP")]
+str(fd)
+```
+## Cleaning Data
+
+EVTYPE, FATALITIES, INJURIES, PROPDMG & CROPDMG variables all have valid data and no NULL data.  
+However, the unit of PROPDMGEXP and CROPDMGEXP has unexpected data which are not explained in the NOAA document, such as "?" (7 records in CROPDMGEXP, 8 records in PROPDMGEXP), "-" (1 record in PROPDMGEXP) and "+" (5 records in PROPDMGEXP).
+
+This is the explanation in NOAA document regarding to DMGEXP. 
+"Estimates should be rounded to three significant digits, followed by an alphabetical character signifying the magnitude of the
+number, i.e., 1.55B for $1,550,000,000. Alphabetical characters used to signify magnitude include "K" for thousands, "M" for millions, and "B" for billions. If additional precision is available, it may be provided in the narrative part of the entry."
+
+For this report, those records with "?", "-", and "+" are set to NA and are removed in the calculation.  Otherwise, the damage is calculated with this formula -- (DMG * 10^DMGEXP).  For character DMGEXP, the following is the conversion.
+
+  * B or b is 10^9 
+  * M or m is 10^6
+  * K or k is 10^3
+  * H or h is 10^2
+
+```{r clean data}
+#create the array for DMGEXP
+dmgexp <- c("", "+", "-", "?", 0:8, "h", "H", "k", "K", "m", "M", "b", "B")
+# convert to digit for calculation later
+# set "+", "-", "?" to NA
+digit <- c(0, NA, NA, NA, 0:8, 2, 2, 3, 3, 6, 6, 9, 9)
+# create lookup table
+dmgexplookup <- data.frame(dmgexp, digit)
+
+# add two new columns for PROPDMGEXP & PROPDMGEXP accordingly upon the lookup table
+fd$PROPDMGEXP2 <- dmgexplookup[match(fd$PROPDMGEXP,dmgexplookup$dmgexp),2]
+fd$CROPDMGEXP2 <- dmgexplookup[match(fd$CROPDMGEXP,dmgexplookup$dmgexp),2]
+
+```
+Calculate all the impacted data by event type (EVTYPE)
+
+```{r calculate data}
+# load the library
+library(plyr)
+# remove NA for DMGEXP in "?", "-", "+"
+result <- ddply(fd, .(EVTYPE), summarize,
+                ftsum=sum(FATALITIES),
+                injsum=sum(INJURIES),
+                propdmgsum=sum(PROPDMG*10^PROPDMGEXP2, na.rm = TRUE),  
+                cropdmgsum=sum(CROPDMG*10^CROPDMGEXP2, na.rm = TRUE),
+                dmgall=sum(propdmgsum,cropdmgsum))
+```
+## Analysis Results
+
+### Population Health Impact
+
+For the population health impact, Fatalities and Injuries data table and charts are presented respectively below. Only top 10 events are displayed accordingly. 
+
+First, fatality trend is presented below.
+```{R Fatalities}
+library(ggplot2)
+# get the top 10 event type by fatalities 
+ft <- result[order(result$ftsum, decreasing=TRUE),][1:10,]
+
+# print top 10 Fatalities
+print(ft[, c(1,2)], row.names = FALSE)
+
+#plot the top 10 
+gf<-ggplot(ft, aes(y=ftsum, x=reorder(EVTYPE, ftsum)))+
+  geom_bar(stat="identity", fill="blue")+
+  coord_flip()+
+  ggtitle("Top 10 Event Types by Total Fatalities")+
+  xlab("Event Type")+
+  ylab("Total Fatalities")
+
+gf
+
+```
+
+
+The event with the largest fatalities is "Tornado". 
+The total of fatalities of Tornado is 5,633.
+
+
+Second, injury trend is presented below.
+```{R Injuries}
+
+# get the top 10 event type by injuries 
+inj <- result[order(result$injsum, decreasing=TRUE),][1:10,]
+
+# print top 10 Injuries
+print(ft[, c(1,3)], row.names = FALSE)
+
+#plot the top 10 
+
+gi<-ggplot(inj, aes(y=injsum, x=reorder(EVTYPE, injsum)))+
+  geom_bar(stat="identity", fill="purple")+
+  coord_flip()+
+  ggtitle("Top 10 Event Types by Total Injuries")+
+  xlab("Event Type")+
+  ylab("Total Injuries")
+
+gi
+
+```
+
+
+The event with the largest injuries is "Tornado", same as the fatalities. 
+The total of injuries of Tornado is 91346.  
+
+From both charts of fatalities and injuries, it's very oblivious that Tornado is the most harmful event in US on population health. Top 2 events have big gap along with Tornado, especially on injuries. 
+
+### Economy Impact
+
+For the economy impact, both property damage and crop damage are used as total damage in US dollars.  Also, only top 10 event types are displayed.  
+
+```{r total damage}
+# get the top 10 event type by total damages
+totaldmg <- result[order(result$dmgall, decreasing=TRUE),][1:10,]
+
+# print top 10 total damage
+print(totaldmg[, c(1,6)], row.names = FALSE)
+
+# from the top 10 data, all the damage are over billion. Use Billion for the plot
+#plot the top 10 
+gt<-ggplot(totaldmg, aes(y=dmgall/10^9, x=reorder(EVTYPE, dmgall)))+
+  geom_bar(stat="identity", fill="blue")+
+  coord_flip()+
+  ggtitle("Top 10 Event Types by Total Damages")+
+  xlab("Event Type")+
+  ylab("Total Damages ($Billions)")
+gt
+```
+
+
+From the chart, "Flood" caused the most damages and the estimation of damages is around 150 billion. 
